@@ -119,14 +119,29 @@ def extract_kernel(img, out_path, auto_decompress_flag=True):
     raw = img.data[off:end]
     utils.write_file(out_path, raw)
     log.ok(f"kernel saved to {out_path} ({len(raw)} bytes)")
-    if auto_decompress_flag:
-        kind = decompress.detect(raw)
-        if kind:
-            dec, kind = decompress.auto_decompress(raw)
-            if dec:
-                dec_path = out_path + ".decompressed"
-                utils.write_file(dec_path, dec)
-                log.ok(f"decompressed kernel saved to {dec_path}")
+    if not auto_decompress_flag:
+        return True
+    kind = decompress.detect(raw)
+    if kind:
+        dec, kind = decompress.auto_decompress(raw)
+        if dec:
+            dec_path = out_path + ".decompressed"
+            utils.write_file(dec_path, dec)
+            log.ok(f"decompressed kernel saved to {dec_path}")
+        return True
+    offset, kind = decompress.find_compressed_offset(raw)
+    if offset is None:
+        log.warn("no compression detected in kernel")
+        return True
+    log.info(f"compression {kind} found at offset 0x{offset:X}")
+    sliced = raw[offset:]
+    dec, kind = decompress.auto_decompress(sliced)
+    if dec:
+        dec_path = out_path + ".decompressed"
+        utils.write_file(dec_path, dec)
+        log.ok(f"decompressed kernel saved to {dec_path}")
+    else:
+        log.warn(f"decompression failed for {kind}")
     return True
 
 def extract_ramdisk(img, out_path, auto_decompress_flag=True):
@@ -141,14 +156,29 @@ def extract_ramdisk(img, out_path, auto_decompress_flag=True):
     raw = img.data[off:end]
     utils.write_file(out_path, raw)
     log.ok(f"ramdisk saved to {out_path} ({len(raw)} bytes)")
-    if auto_decompress_flag:
-        kind = decompress.detect(raw)
-        if kind:
-            dec, kind = decompress.auto_decompress(raw)
-            if dec:
-                dec_path = out_path + ".decompressed"
-                utils.write_file(dec_path, dec)
-                log.ok(f"decompressed ramdisk saved to {dec_path}")
+    if not auto_decompress_flag:
+        return True
+    kind = decompress.detect(raw)
+    if kind:
+        dec, kind = decompress.auto_decompress(raw)
+        if dec:
+            dec_path = out_path + ".decompressed"
+            utils.write_file(dec_path, dec)
+            log.ok(f"decompressed ramdisk saved to {dec_path}")
+        return True
+    offset, kind = decompress.find_compressed_offset(raw)
+    if offset is None:
+        log.warn("no compression detected in ramdisk")
+        return True
+    log.info(f"compression {kind} found at offset 0x{offset:X}")
+    sliced = raw[offset:]
+    dec, kind = decompress.auto_decompress(sliced)
+    if dec:
+        dec_path = out_path + ".decompressed"
+        utils.write_file(dec_path, dec)
+        log.ok(f"decompressed ramdisk saved to {dec_path}")
+    else:
+        log.warn(f"decompression failed for {kind}")
     return True
 
 def extract_bootconfig(img, out_path):
