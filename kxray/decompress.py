@@ -47,14 +47,22 @@ def try_gzip(data):
     try:
         return gzip.decompress(data)
     except Exception:
-        try:
-            return zlib.decompress(data, 16 + zlib.MAX_WBITS)
-        except Exception:
-            return None
+        pass
+    try:
+        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        out = d.decompress(data)
+        out += d.flush()
+        if len(out) > 0:
+            return out
+    except Exception:
+        pass
+    return None
 
 def try_bzip2(data):
     try:
-        return bz2.decompress(data)
+        d = bz2.BZ2Decompressor()
+        out = d.decompress(data)
+        return out
     except Exception:
         return None
 
@@ -69,7 +77,9 @@ def try_lzma(data):
 
 def try_xz(data):
     try:
-        return lzma.decompress(data, format=lzma.FORMAT_XZ)
+        d = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
+        out = d.decompress(data)
+        return out
     except Exception:
         return None
 
@@ -78,9 +88,15 @@ def try_zstd(data):
         return None
     try:
         dctx = zstd.ZstdDecompressor()
-        return dctx.decompress(data, max_output_size=256 * 1024 * 1024)
+        return dctx.decompress(data, max_output_size=512 * 1024 * 1024)
     except Exception:
-        return None
+        try:
+            dctx = zstd.ZstdDecompressor()
+            reader = dctx.stream_reader(data)
+            out = reader.read()
+            return out
+        except Exception:
+            return None
 
 def try_lz4_frame(data):
     if not HAVE_LZ4:
@@ -119,3 +135,19 @@ def auto_decompress(data):
         return None, kind
     log.ok(f"decompressed: {len(data)} -> {len(result)} bytes")
     return result, kind
+
+def find_compressed_offset(data, max_scan=0x100000):
+    MAGICS = [
+        (b"\x1f\x8b\x08", "gzip", 3),
+        (b"\x04\x22\x4d\x18", "lz4_frame", 4),
+        (b"\x5d\x00\x00\x00", "lzma", 4),
+        (b"\xfd\x37\x7a\x58\x5a\x00", "xz", 6),
+        (b"\x28\xb5\x2f\xfd", "zstd", 4),
+        (b"BZh", "bzip2", 3),
+    ]
+    limit = min(len(data), max_scan)
+    for offset in range(0, limit):
+        for magic, name, length in MAGICS:
+            if data[offset:offset + length] == magic:
+                return offset, name
+    return None, None
