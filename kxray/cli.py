@@ -119,6 +119,26 @@ def cmd_analyze():
     log.ok(t("analyze_done"))
     pause()
 
+def _select_kernel_data(outdir):
+    kernel_path = os.path.join(outdir, "kernel")
+    kernel_dec_path = kernel_path + ".decompressed"
+    if os.path.exists(kernel_dec_path):
+        return kernel_dec_path
+    if os.path.exists(kernel_path):
+        return kernel_path
+    return None
+
+def _try_parse_btf(kernel_data):
+    log.info(t("btf_search"))
+    parsed, all_candidates = bootimg.find_btf_in_kernel(kernel_data)
+    if parsed:
+        state["btf"] = parsed
+        state["btf_all"] = all_candidates
+        log.ok(t("btf_found", len(parsed.types)))
+        return True
+    log.warn(t("btf_not_found"))
+    return False
+
 def cmd_extract():
     clear()
     header()
@@ -138,17 +158,11 @@ def cmd_extract():
     bootimg.extract_kernel(state["bootimg"], os.path.join(outdir, "kernel"))
     log.info(t("extract_ramdisk"))
     bootimg.extract_ramdisk(state["bootimg"], os.path.join(outdir, "ramdisk"))
-    kernel_path = os.path.join(outdir, "kernel")
-    if os.path.exists(kernel_path):
+    kernel_path = _select_kernel_data(outdir)
+    if kernel_path:
         state["kernel_data"] = utils.read_file(kernel_path)
-        log.info(t("btf_search"))
-        parsed, all_candidates = bootimg.find_btf_in_kernel(state["kernel_data"])
-        if parsed:
-            state["btf"] = parsed
-            state["btf_all"] = all_candidates
-            log.ok(t("btf_found", len(parsed.types)))
-        else:
-            log.warn(t("btf_not_found"))
+        log.info(f"using kernel: {kernel_path}")
+        _try_parse_btf(state["kernel_data"])
     log.ok(t("extract_done"))
     pause()
 
@@ -162,14 +176,7 @@ def cmd_btf():
         pause()
         return
     if not state["btf"]:
-        log.info(t("btf_search"))
-        parsed, all_candidates = bootimg.find_btf_in_kernel(state["kernel_data"])
-        if parsed:
-            state["btf"] = parsed
-            state["btf_all"] = all_candidates
-            log.ok(t("btf_found", len(parsed.types)))
-        else:
-            log.warn(t("btf_not_found"))
+        if not _try_parse_btf(state["kernel_data"]):
             pause()
             return
     b = state["btf"]
@@ -219,6 +226,39 @@ def btf_find_struct(b):
         log.info(f"  +0x{off:04X}  {m.name}  (type_id={m.type_id})")
     pause()
 
+def _prompt_preset():
+    print()
+    print(t("preset_title"))
+    print()
+    print(t("preset_minimal"))
+    print(t("preset_full"))
+    print(t("preset_selinux"))
+    print(t("preset_defex"))
+    print(t("preset_kdp"))
+    print(t("preset_knox"))
+    print(t("preset_seccomp"))
+    print(t("preset_pipe"))
+    print(t("preset_umh"))
+    print(t("preset_filp"))
+    print(t("preset_custom"))
+    print(t("preset_back"))
+    print()
+    choice = input(f"{t('prompt_choice')}: ").strip()
+    preset_map = {
+        "1": "minimal",
+        "2": "full",
+        "3": "selinux",
+        "4": "defex",
+        "5": "kdp",
+        "6": "knox",
+        "7": "seccomp",
+        "8": "pipe",
+        "9": "umh",
+        "10": "filp",
+        "11": "custom",
+    }
+    return preset_map.get(choice), choice
+
 def cmd_export():
     clear()
     header()
@@ -229,14 +269,7 @@ def cmd_export():
         pause()
         return
     if not state["btf"]:
-        log.info(t("btf_search"))
-        parsed, all_candidates = bootimg.find_btf_in_kernel(state["kernel_data"])
-        if parsed:
-            state["btf"] = parsed
-            state["btf_all"] = all_candidates
-            log.ok(t("btf_found", len(parsed.types)))
-        else:
-            log.warn(t("btf_not_found"))
+        if not _try_parse_btf(state["kernel_data"]):
             pause()
             return
     kernel_version = bootimg.extract_kernel_version(state["kernel_data"])
@@ -249,16 +282,46 @@ def cmd_export():
         log.ok(t("vermagic_found", vermagic))
     else:
         log.warn(t("vermagic_not_found"))
-    outpath = input(f"{t('prompt_outfile')}: ").strip().strip('"').strip("'")
-    if not outpath:
-        outpath = "offsets.h"
-    if os.path.isdir(outpath):
-        outpath = os.path.join(outpath, "offsets.h")
-        log.info(t("export_dir_append", outpath))
-    log.info(t("export_start", outpath))
-    content = offsets.export(state["btf"], kernel_version, vermagic)
-    utils.write_file(outpath, content.encode("utf-8"))
-    log.ok(t("export_done", outpath))
+    preset, raw_choice = _prompt_preset()
+    if not preset:
+        return
+    content = None
+    if preset == "custom":
+        log.info(t("custom_prompt"))
+        log.hint(t("custom_example"))
+        custom = input("> ").strip()
+        if not custom:
+            log.warn(t("custom_empty"))
+            pause()
+            return
+        struct_list = [s.strip() for s in custom.split(",")]
+        content = offsets.export_custom(
+            state["btf"], struct_list, kernel_version, vermagic
+        )
+    else:
+        outpath = input(f"{t('prompt_outfile')}: ").strip().strip('"').strip("'")
+        if not outpath:
+            outpath = f"offsets_{preset}.h"
+        if os.path.isdir(outpath):
+            outpath = os.path.join(outpath, f"offsets_{preset}.h")
+            log.info(t("export_dir_append", outpath))
+        log.info(t("export_start", outpath))
+        content = offsets.export(
+            state["btf"], kernel_version, vermagic, preset
+        )
+        utils.write_file(outpath, content.encode("utf-8"))
+        log.ok(t("export_done", outpath))
+        pause()
+        return
+    if content is not None:
+        outpath = input(f"{t('prompt_outfile')}: ").strip().strip('"').strip("'")
+        if not outpath:
+            outpath = "offsets_custom.h"
+        if os.path.isdir(outpath):
+            outpath = os.path.join(outpath, "offsets_custom.h")
+        log.info(t("export_start", outpath))
+        utils.write_file(outpath, content.encode("utf-8"))
+        log.ok(t("export_done", outpath))
     pause()
 
 def cmd_settings():
