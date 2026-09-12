@@ -1,68 +1,156 @@
 from . import log
 from . import btf as btf_mod
 
-NEEDED_STRUCTS = {
-    "task_struct": [
-        ("TASK_THREAD_INFO_FLAGS", "thread_info"),
-        ("TASK_PID", "pid"),
-        ("TASK_TGID", "tgid"),
-        ("TASK_COMM", "comm"),
-        ("TASK_TASKS", "tasks"),
-        ("TASK_CRED", "cred"),
-        ("TASK_REAL_CRED", "real_cred"),
-        ("TASK_SECCOMP", "seccomp"),
-        ("TASK_ATOMIC_FLAGS", "atomic_flags"),
-        ("TASK_FILES", "files"),
-        ("TASK_MM", "mm"),
-        ("TASK_ACTIVE_MM", "active_mm"),
-    ],
-    "cred": [
-        ("CRED_UID", "uid"),
-        ("CRED_GID", "gid"),
-        ("CRED_EUID", "euid"),
-        ("CRED_EGID", "egid"),
-        ("CRED_SUID", "suid"),
-        ("CRED_SGID", "sgid"),
-        ("CRED_FSUID", "fsuid"),
-        ("CRED_FSGID", "fsgid"),
-        ("CRED_CAPS", "cap_inheritable"),
-        ("CRED_SECURITY", "security"),
-        ("CRED_USER_NS", "user_ns"),
-    ],
-    "seccomp": [
-        ("SECCOMP_MODE", "mode"),
-        ("SECCOMP_FILTER_COUNT", "filter_count"),
-        ("SECCOMP_FILTER", "filter"),
-    ],
-    "thread_info": [
-        ("THREAD_INFO_FLAGS", "flags"),
-    ],
-    "pipe_buffer": [
-        ("PIPE_BUFFER_PAGE", "page"),
-        ("PIPE_BUFFER_OFFSET", "offset"),
-        ("PIPE_BUFFER_LEN", "len"),
-        ("PIPE_BUFFER_OPS", "ops"),
-        ("PIPE_BUFFER_FLAGS", "flags"),
-        ("PIPE_BUFFER_PRIVATE", "private"),
-    ],
-    "pipe_inode_info": [
-        ("PIPE_HEAD", "head"),
-        ("PIPE_TAIL", "tail"),
-        ("PIPE_MAX_USAGE", "max_usage"),
-        ("PIPE_RING_SIZE", "ring_size"),
-        ("PIPE_NR_ACCOUNTED", "nr_accounted"),
-        ("PIPE_READERS", "readers"),
-        ("PIPE_WRITERS", "writers"),
-        ("PIPE_FILES", "files"),
-        ("PIPE_TMP_PAGE", "tmp_page"),
-        ("PIPE_BUFS", "bufs"),
-        ("PIPE_USER", "user"),
-    ],
+PRESETS = {
+    "minimal": {
+        "task_struct": [
+            "thread_info", "pid", "tgid", "comm", "tasks",
+            "cred", "real_cred", "seccomp", "atomic_flags",
+        ],
+        "cred": ["uid", "gid", "euid", "egid", "security"],
+        "seccomp": ["mode", "filter_count", "filter"],
+        "thread_info": ["flags"],
+        "pipe_buffer": ["page", "offset", "len", "ops", "flags", "private"],
+        "pipe_inode_info": [
+            "head", "tail", "max_usage", "ring_size", "nr_accounted",
+            "readers", "writers", "files", "tmp_page", "bufs", "user",
+        ],
+    },
+    "full": {
+        "task_struct": "*",
+        "cred": "*",
+        "seccomp": "*",
+        "thread_info": "*",
+        "pipe_buffer": "*",
+        "pipe_inode_info": "*",
+        "file": "*",
+        "file_operations": "*",
+        "files_struct": "*",
+        "fdtable": "*",
+        "mm_struct": "*",
+        "work_struct": "*",
+        "subprocess_info": "*",
+        "worker_pool": "*",
+        "pool_workqueue": "*",
+        "workqueue_struct": "*",
+        "kobject": "*",
+        "inode": "*",
+        "dentry": "*",
+        "super_block": "*",
+        "vm_area_struct": "*",
+        "page": "*",
+    },
+    "selinux": {
+        "cred": ["uid", "gid", "security", "user_ns"],
+        "task_struct": ["cred", "real_cred", "pid", "tgid", "comm"],
+        "task_security_struct": "*",
+        "cred_security_struct": "*",
+        "selinux_state": "*",
+        "selinux_enforcing_offsets": "*",
+    },
+    "defex": {
+        "task_struct": ["security", "pid", "tgid", "comm"],
+        "defex_rule": "*",
+        "defex_task_ctx": "*",
+        "defex_task": "*",
+    },
+    "kdp": {
+        "cred": ["security", "uid", "gid"],
+        "task_struct": ["cred", "real_cred"],
+        "kdp_cred": "*",
+        "kdp_task": "*",
+    },
+    "knox": {
+        "cred": ["security"],
+        "task_struct": ["cred", "real_cred", "security"],
+        "knox_handle": "*",
+        "knox_cred": "*",
+        "knox_task": "*",
+    },
+    "seccomp": {
+        "task_struct": ["seccomp", "thread_info", "atomic_flags", "pid", "tgid"],
+        "seccomp": "*",
+        "thread_info": "*",
+    },
+    "pipe": {
+        "pipe_buffer": "*",
+        "pipe_inode_info": "*",
+        "page": "*",
+        "file": "*",
+        "file_operations": "*",
+    },
+    "umh": {
+        "work_struct": "*",
+        "subprocess_info": "*",
+        "worker_pool": "*",
+        "pool_workqueue": "*",
+        "workqueue_struct": "*",
+    },
+    "filp": {
+        "file": "*",
+        "file_operations": "*",
+        "files_struct": "*",
+        "fdtable": "*",
+    },
 }
 
-def export(btf, kernel_version=None, vermagic=None):
+PRESET_ALIASES = {
+    "minimal": "minimal",
+    "full": "full",
+    "selinux": "selinux",
+    "defex": "defex",
+    "kdp": "kdp",
+    "knox": "knox",
+    "seccomp": "seccomp",
+    "pipe": "pipe",
+    "umh": "umh",
+    "filp": "filp",
+}
+
+def _macro_name(struct_name, field_name):
+    s = struct_name.upper()
+    f = field_name.upper()
+    out = []
+    for ch in s + "_" + f:
+        if ch.isalnum() or ch == "_":
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out)
+
+def _emit_struct(lines, btf, struct_name, fields):
+    s = btf_mod.find_struct(btf, struct_name)
+    if not s:
+        log.warn(f"struct {struct_name} not found")
+        return 0
+    lines.append(f"/* {struct_name} (size=0x{s.size_or_type:X}) */")
+    n = 0
+    if fields == "*":
+        for m in s.members:
+            if not m.name:
+                continue
+            macro = _macro_name(struct_name, m.name)
+            off = m.offset // 8
+            lines.append(f"#define {macro}_OFF 0x{off:X}")
+            n += 1
+    else:
+        for field in fields:
+            m = btf_mod.find_field(s, field)
+            if not m:
+                log.warn(f"field {struct_name}.{field} not found")
+                continue
+            macro = _macro_name(struct_name, field)
+            off = m.offset // 8
+            lines.append(f"#define {macro}_OFF 0x{off:X}")
+            n += 1
+    lines.append("")
+    return n
+
+def export(btf, kernel_version=None, vermagic=None, preset="minimal"):
+    spec = PRESETS.get(preset, PRESETS["minimal"])
     lines = []
     lines.append("/* Auto-generated by kxray from BTF */")
+    lines.append(f"/* Preset: {preset} */")
     if kernel_version:
         lines.append(f"/* Kernel: {kernel_version} */")
     if vermagic:
@@ -77,20 +165,48 @@ def export(btf, kernel_version=None, vermagic=None):
         lines.append(f"#define KXRAY_VERMAGIC \"{vermagic}\"")
     if kernel_version or vermagic:
         lines.append("")
-    for struct_name, fields in NEEDED_STRUCTS.items():
-        s = btf_mod.find_struct(btf, struct_name)
-        if not s:
-            log.warn(f"struct {struct_name} not found")
-            continue
-        lines.append(f"/* {struct_name} (size=0x{s.size_or_type:X}) */")
-        for macro, field in fields:
-            m = btf_mod.find_field(s, field)
-            if not m:
-                log.warn(f"field {struct_name}.{field} not found")
-                continue
-            off = m.offset // 8
-            lines.append(f"#define {macro}_OFF 0x{off:X}")
-        lines.append("")
+    total = 0
+    for struct_name, fields in spec.items():
+        total += _emit_struct(lines, btf, struct_name, fields)
     lines.append("#endif")
     lines.append("")
+    log.info(f"exported {total} fields from {len(spec)} structs")
+    return "\n".join(lines)
+
+def export_custom(btf, struct_list, kernel_version=None, vermagic=None):
+    spec = {}
+    for entry in struct_list:
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" in entry:
+            name, fields = entry.split(":", 1)
+            name = name.strip()
+            fields = [f.strip() for f in fields.split(",") if f.strip()]
+            spec[name] = fields if fields else "*"
+        else:
+            spec[entry] = "*"
+    lines = []
+    lines.append("/* Auto-generated by kxray from BTF */")
+    lines.append("/* Preset: custom */")
+    if kernel_version:
+        lines.append(f"/* Kernel: {kernel_version} */")
+    if vermagic:
+        lines.append(f"/* Vermagic: {vermagic} */")
+    lines.append("")
+    lines.append("#ifndef OFFSETS_H")
+    lines.append("#define OFFSETS_H")
+    lines.append("")
+    if kernel_version:
+        lines.append(f"#define KXRAY_KERNEL_VERSION \"{kernel_version}\"")
+    if vermagic:
+        lines.append(f"#define KXRAY_VERMAGIC \"{vermagic}\"")
+    if kernel_version or vermagic:
+        lines.append("")
+    total = 0
+    for struct_name, fields in spec.items():
+        total += _emit_struct(lines, btf, struct_name, fields)
+    lines.append("#endif")
+    lines.append("")
+    log.info(f"exported {total} fields from {len(spec)} structs (custom)")
     return "\n".join(lines)
